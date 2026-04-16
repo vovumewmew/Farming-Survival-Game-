@@ -1,4 +1,5 @@
 #include "render_system.h"
+#include <cmath>
 
 void RenderSystem::update(entt::registry& registry, SDL_Renderer* renderer)
 {
@@ -7,10 +8,21 @@ void RenderSystem::update(entt::registry& registry, SDL_Renderer* renderer)
     {
         auto& transform = view.get<Transform>(entity);
         auto& sprite = view.get<Sprite>(entity);
+        SDL_FRect drawRect = transform.rect;
+
+        if(auto* animation = registry.try_get<Animation>(entity))
+        {
+            drawRect.x += animation->idleOffsetX;
+            drawRect.y += animation->idleOffsetY;
+        }
+
+        // Snap to pixel grid to avoid diagonal/strip artifacts on pixel art.
+        drawRect.x = std::round(drawRect.x);
+        drawRect.y = std::round(drawRect.y);
 
         if(sprite.texture)
         {
-            SDL_RenderTextureRotated(renderer, sprite.texture, &sprite.srcRect, &transform.rect, 0.0, nullptr, sprite.flip);
+            SDL_RenderTextureRotated(renderer, sprite.texture, &sprite.srcRect, &drawRect, 0.0, nullptr, sprite.flip);
         }
     }
 }

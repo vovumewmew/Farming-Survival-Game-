@@ -5,6 +5,7 @@
 #include "../components/sprite.h"
 #include "../components/transform.h"
 #include "../components/velocity.h"
+#include "../components/tilled.h"
 #include "../systems/movement_system.h"
 #include "../systems/render_system.h"
 #include "../utils/texture_manager.h"
@@ -17,8 +18,13 @@ namespace
     constexpr float kFrameWidth = 20.0f;
     constexpr float kFrameHeight = 20.0f;
     constexpr int kFrameCount = 4;
-    constexpr float kFrameDuration = 0.1f;
+    constexpr float kWalkFrameDuration = 0.1f;
+    constexpr float kIdleFrameDuration = 0.2f;
     constexpr float kPlayerScale = 2.0f;
+    constexpr float kIdleMotionSpeed = 1.0f;
+    constexpr float kIdleOffsetY = 0.9f;
+    constexpr float kIdleOffsetYHarmonic = 0.3f;
+    constexpr float kIdleOffsetX = 0.55f;
 
     int rowFromFacing(FacingDirection facing)
     {
@@ -107,6 +113,29 @@ bool Game::init(const char* title, int width, int height)
     last_time = SDL_GetTicks();
     isRunning = true;
     return true;
+
+    SDL_Texture* dirtTex = TextureManager::LoadTexture("", renderer);
+
+    float TILE_SIZE = 32.0f;
+
+    float startX = (width - TILE_SIZE * 3)/ 2.0f;
+    float startY = (height - TILE_SIZE * 3) / 2.0f;
+
+    for(int row = 0; row < 3; row++)
+    {
+        for(int col = 0; col < 3; col++)
+        {
+            auto dirtEntity = registry.create();
+
+            float x = startX + col * TILE_SIZE;
+            float y = startY + row * TILE_SIZE;
+
+            registry.emplace<Tilled>(dirtEntity, false);
+            registry.emplace<Transform>(dirtEntity, SDL_FRect{x, y, TILE_SIZE, TILE_SIZE});
+
+            registry.emplace<Sprite>(dirtEntity, dirtTex, SDL_FRect{0, 0, 16, 16});
+        }
+    }
 }
 
 void Game::handleEvents()
@@ -216,16 +245,37 @@ void Game::update()
         if(animation.isMoving)
         {
             animation.timer += delta_time;
-            if(animation.timer >= kFrameDuration)
+            if(animation.timer >= kWalkFrameDuration)
             {
                 animation.frameIndex = (animation.frameIndex + 1) % kFrameCount;
                 animation.timer = 0.0f;
             }
+
+            float recover = delta_time * 12.0f;
+            if(recover > 1.0f)
+            {
+                recover = 1.0f;
+            }
+            animation.idleOffsetX += (0.0f - animation.idleOffsetX) * recover;
+            animation.idleOffsetY += (0.0f - animation.idleOffsetY) * recover;
         }
         else
         {
-            animation.frameIndex = 0;
-            animation.timer = 0.0f;
+            animation.timer += delta_time;
+            if(animation.timer >= kIdleFrameDuration)
+            {
+                animation.frameIndex = (animation.frameIndex + 1) % kFrameCount;
+                animation.timer = 0.0f;
+            }
+
+            animation.idleBobTime += delta_time;
+            const float t = animation.idleBobTime * kIdleMotionSpeed;
+            const float primary = sin(t);
+            const float harmonic = sin((t * 2.0f) + 0.8f);
+            const float sway = sin(t + 1.1f);
+
+            animation.idleOffsetY = (primary * kIdleOffsetY) + (harmonic * kIdleOffsetYHarmonic);
+            animation.idleOffsetX = sway * kIdleOffsetX;
         }
 
         sprite.texture = animation.isMoving ? sprite.walkTexture : sprite.idleTexture;

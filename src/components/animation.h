@@ -15,6 +15,9 @@ struct Animation
     float timer = 0.0f;
     FacingDirection facing = FacingDirection::DOWN;
     bool isMoving = false;
+    float idleBobTime = 0.0f;
+    float idleOffsetX = 0.0f;
+    float idleOffsetY = 0.0f;
 };
 
 #endif

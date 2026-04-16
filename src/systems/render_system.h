@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 #include "../components/transform.h"
 #include "../components/sprite.h"
+#include "../components/animation.h"
 
 namespace RenderSystem
 {
