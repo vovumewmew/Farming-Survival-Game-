@@ -10,35 +10,56 @@
 #include "../systems/render_system.h"
 #include "../utils/texture_manager.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace
 {
     constexpr float kPlayerSpeed = 180.0f;
-    constexpr float kFrameWidth = 20.0f;
-    constexpr float kFrameHeight = 20.0f;
+    // Basic Charakter Spritesheet: 192x192, grid 4x4 => each cell 48x48.
+    // Visible cat sprite is 16x16 inside each cell, anchored at (16,16).
+    constexpr float kCellSize = 48.0f;
+    constexpr float kFrameInsetX = 16.0f;
+    constexpr float kFrameInsetY = 16.0f;
+    constexpr float kFrameWidth = 16.0f;
+    constexpr float kFrameHeight = 16.0f;
     constexpr int kFrameCount = 4;
-    constexpr float kWalkFrameDuration = 0.1f;
-    constexpr float kIdleFrameDuration = 0.2f;
+    constexpr float kWalkFrameDurationMin = 0.05f;
+    constexpr float kWalkFrameDurationMax = 0.2f;
+    constexpr float kIdleFrameDuration = 0.22f;
+    constexpr int kIdleFrameSequence[] = {0, 0, 1, 0};
+    constexpr int kIdleFrameSequenceCount = static_cast<int>(sizeof(kIdleFrameSequence) / sizeof(kIdleFrameSequence[0]));
     constexpr float kPlayerScale = 2.0f;
-    constexpr float kIdleMotionSpeed = 1.0f;
-    constexpr float kIdleOffsetY = 0.9f;
-    constexpr float kIdleOffsetYHarmonic = 0.3f;
-    constexpr float kIdleOffsetX = 0.55f;
+    constexpr float kIdleCycleSpeed = 1.38f;
+    constexpr float kIdleBounceDown = 0.45f;
+    constexpr float kIdleBounceDownSecondary = 0.11f;
+    constexpr float kIdleSwayX = 0.18f;
+    constexpr float kIdleSwayXSecondary = 0.07f;
+    constexpr float kMoveSwayX = 0.8f;
+    constexpr float kMoveBobY = 0.5f;
+    constexpr float kOffsetResponse = 12.5f;
+    constexpr float kTwoPi = 6.2831853f;
 
     int rowFromFacing(FacingDirection facing)
     {
         switch(facing)
         {
             case FacingDirection::UP:
-                return 4;
+                return 1;
             case FacingDirection::LEFT:
-            case FacingDirection::RIGHT:
                 return 2;
+            case FacingDirection::RIGHT:
+                return 3;
             case FacingDirection::DOWN:
             default:
                 return 0;
         }
+    }
+
+    float smoothToward(float current, float target, float response, float deltaTime)
+    {
+        const float blend = 1.0f - std::exp(-response * deltaTime);
+        return current + (target - current) * blend;
     }
 }
 
@@ -75,8 +96,8 @@ bool Game::init(const char* title, int width, int height)
         return false;
     }
 
-    SDL_Texture* idleTex = TextureManager::LoadTexture("assets/Character/16x16/16x16 Idle-Sheet.png", renderer);
-    SDL_Texture* walkTex = TextureManager::LoadTexture("assets/Character/16x16/16x16 Walk-Sheet.png", renderer);
+    SDL_Texture* idleTex = TextureManager::LoadTexture("assets/Sprout Lands - Sprites - Basic pack/Characters/Basic Charakter Spritesheet.png", renderer);
+    SDL_Texture* walkTex = TextureManager::LoadTexture("assets/Sprout Lands - Sprites - Basic pack/Characters/Basic Charakter Spritesheet.png", renderer);
     if(!idleTex || !walkTex)
     {
         return false;
@@ -108,18 +129,18 @@ bool Game::init(const char* title, int width, int height)
         SDL_FRect{0.0f, 0.0f, kFrameWidth, kFrameHeight},
         SDL_FLIP_NONE
     );
-    registry.emplace<Animation>(playerEntity, 0, 0.0f, FacingDirection::DOWN, false);
+    registry.emplace<Animation>(playerEntity);
 
-    last_time = SDL_GetTicks();
-    isRunning = true;
-    return true;
+    SDL_Texture* dirtTex = TextureManager::LoadTexture("assets/Sprout Lands - Sprites - Basic pack/Tilesets/Tilled_Dirt.png", renderer);
+    if(!dirtTex)
+    {
+        return false;
+    }
+    SDL_SetTextureScaleMode(dirtTex, SDL_SCALEMODE_NEAREST);
 
-    SDL_Texture* dirtTex = TextureManager::LoadTexture("", renderer);
-
-    float TILE_SIZE = 32.0f;
-
-    float startX = (width - TILE_SIZE * 3)/ 2.0f;
-    float startY = (height - TILE_SIZE * 3) / 2.0f;
+    constexpr float tileSize = 32.0f;
+    const float startX = (width - tileSize * 3.0f) / 2.0f;
+    const float startY = (height - tileSize * 3.0f) / 2.0f;
 
     for(int row = 0; row < 3; row++)
     {
@@ -127,15 +148,25 @@ bool Game::init(const char* title, int width, int height)
         {
             auto dirtEntity = registry.create();
 
-            float x = startX + col * TILE_SIZE;
-            float y = startY + row * TILE_SIZE;
+            const float x = startX + col * tileSize;
+            const float y = startY + row * tileSize;
 
             registry.emplace<Tilled>(dirtEntity, false);
-            registry.emplace<Transform>(dirtEntity, SDL_FRect{x, y, TILE_SIZE, TILE_SIZE});
-
-            registry.emplace<Sprite>(dirtEntity, dirtTex, SDL_FRect{0, 0, 16, 16});
+            registry.emplace<Transform>(dirtEntity, SDL_FRect{x, y, tileSize, tileSize});
+            registry.emplace<Sprite>(
+                dirtEntity,
+                dirtTex,
+                dirtTex,
+                dirtTex,
+                SDL_FRect{0.0f, 0.0f, 16.0f, 16.0f},
+                SDL_FLIP_NONE
+            );
         }
     }
+
+    last_time = SDL_GetTicks();
+    isRunning = true;
+    return true;
 }
 
 void Game::handleEvents()
@@ -229,6 +260,8 @@ void Game::update()
 
         const bool moving = (fabs(vel.dx) > 0.001f) || (fabs(vel.dy) > 0.001f);
         animation.isMoving = moving;
+        const float speed = std::sqrt((vel.dx * vel.dx) + (vel.dy * vel.dy));
+        const float speedNorm = std::clamp(speed / kPlayerSpeed, 0.0f, 1.0f);
 
         if(moving)
         {
@@ -242,46 +275,73 @@ void Game::update()
             }
         }
 
+        float targetOffsetX = 0.0f;
+        float targetOffsetY = 0.0f;
+
         if(animation.isMoving)
         {
-            animation.timer += delta_time;
-            if(animation.timer >= kWalkFrameDuration)
+            if(!animation.wasMoving)
             {
-                animation.frameIndex = (animation.frameIndex + 1) % kFrameCount;
+                animation.frameIndex = 0;
                 animation.timer = 0.0f;
+                animation.idleFrameCursor = 0;
             }
 
-            float recover = delta_time * 12.0f;
-            if(recover > 1.0f)
+            const float walkFrameDuration =
+                kWalkFrameDurationMax + (kWalkFrameDurationMin - kWalkFrameDurationMax) * speedNorm;
+
+            animation.timer += delta_time;
+            while(animation.timer >= walkFrameDuration)
             {
-                recover = 1.0f;
+                animation.frameIndex = (animation.frameIndex + 1) % kFrameCount;
+                animation.timer -= walkFrameDuration;
             }
-            animation.idleOffsetX += (0.0f - animation.idleOffsetX) * recover;
-            animation.idleOffsetY += (0.0f - animation.idleOffsetY) * recover;
+
+            const float frameProgress = animation.timer / walkFrameDuration;
+            const float stepPhase = (static_cast<float>(animation.frameIndex) + frameProgress) / kFrameCount;
+            const float stepAngle = stepPhase * 6.2831853f;
+
+            // Layered move motion: crisp side swing + soft step bob.
+            targetOffsetX = std::sin(stepAngle) * kMoveSwayX;
+            targetOffsetY = std::fabs(std::sin(stepAngle)) * kMoveBobY;
         }
         else
         {
-            animation.timer += delta_time;
-            if(animation.timer >= kIdleFrameDuration)
+            if(animation.wasMoving)
             {
-                animation.frameIndex = (animation.frameIndex + 1) % kFrameCount;
                 animation.timer = 0.0f;
+                animation.idleFrameCursor = 0;
             }
 
-            animation.idleBobTime += delta_time;
-            const float t = animation.idleBobTime * kIdleMotionSpeed;
-            const float primary = sin(t);
-            const float harmonic = sin((t * 2.0f) + 0.8f);
-            const float sway = sin(t + 1.1f);
+            animation.timer += delta_time;
+            while(animation.timer >= kIdleFrameDuration)
+            {
+                animation.idleFrameCursor = (animation.idleFrameCursor + 1) % kIdleFrameSequenceCount;
+                animation.timer -= kIdleFrameDuration;
+            }
+            animation.frameIndex = kIdleFrameSequence[animation.idleFrameCursor];
 
-            animation.idleOffsetY = (primary * kIdleOffsetY) + (harmonic * kIdleOffsetYHarmonic);
-            animation.idleOffsetX = sway * kIdleOffsetX;
+            animation.idleBobTime += delta_time;
+            const float phase = animation.idleBobTime * kIdleCycleSpeed * kTwoPi;
+            const float bounce = 0.5f - 0.5f * std::cos(phase); // 0..1
+            const float bounceSoft = std::pow(bounce, 1.45f);
+            const float bounceSecondary = 0.5f - 0.5f * std::cos((phase * 2.0f) + 0.65f);
+            const float sway = std::sin(phase + 0.9f);
+            const float swaySecondary = std::sin((phase * 2.0f) + 1.8f);
+
+            // Mostly-downward motion to feel like a soft knee bend, not floating.
+            targetOffsetY = (bounceSoft * kIdleBounceDown) + (bounceSecondary * kIdleBounceDownSecondary);
+            targetOffsetX = (sway * kIdleSwayX) + (swaySecondary * kIdleSwayXSecondary);
         }
 
+        animation.idleOffsetX = smoothToward(animation.idleOffsetX, targetOffsetX, kOffsetResponse, delta_time);
+        animation.idleOffsetY = smoothToward(animation.idleOffsetY, targetOffsetY, kOffsetResponse, delta_time);
+        animation.wasMoving = animation.isMoving;
+
         sprite.texture = animation.isMoving ? sprite.walkTexture : sprite.idleTexture;
-        sprite.flip = (animation.facing == FacingDirection::LEFT) ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
-        sprite.srcRect.x = static_cast<float>(animation.frameIndex) * kFrameWidth;
-        sprite.srcRect.y = static_cast<float>(rowFromFacing(animation.facing)) * kFrameHeight;
+        sprite.flip = SDL_FLIP_NONE;
+        sprite.srcRect.x = static_cast<float>(animation.frameIndex) * kCellSize + kFrameInsetX;
+        sprite.srcRect.y = static_cast<float>(rowFromFacing(animation.facing)) * kCellSize + kFrameInsetY;
         sprite.srcRect.w = kFrameWidth;
         sprite.srcRect.h = kFrameHeight;
     }
